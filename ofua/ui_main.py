@@ -423,13 +423,26 @@ class FalloutUpscalerApp(QMainWindow):
             return reply == QMessageBox.StandardButton.Yes
         return True
 
+    def validate_engines_config(self) -> List[str]:
+        """Valide la configuration des moteurs d'upscale."""
+        errors = []
+        uses_realesrgan = any(
+            settings.get("primary") == "realesrgan" or settings.get("fallback") == "realesrgan"
+            for settings in self.engine_settings.values()
+        )
+        if uses_realesrgan:
+            if not self.realesrgan_exe_path or not self.realesrgan_exe_path.exists():
+                errors.append("Real-ESRGAN non trouvé")
+        return errors
+
     def _validate_config(self) -> bool:
         """Validate user configuration before starting."""
         if not self.workspace_dir or not self.workspace_dir.exists():
             QMessageBox.warning(self, "Erreur", "Workspace invalide")
             return False
-        if not self.realesrgan_exe_path or not self.realesrgan_exe_path.exists():
-            QMessageBox.warning(self, "Erreur", "Real-ESRGAN introuvable")
+        errors = self.validate_engines_config()
+        if errors:
+            QMessageBox.warning(self, "Erreur", " ; ".join(errors))
             return False
         return True
 

@@ -180,7 +180,8 @@ class DatArchive:
             entry.data = decompressed_data
             return output_path
         except Exception as e:
-            self._log(f"Erreur lors de l'extraction de {entry.filename}: {e}")
+            self._log(f"Erreur extraction {entry.filename}: {e}")
+            self._log(f"Context: offset={entry.offset}, size={entry.packed_size}")
             if self._signals:
                 self._signals.error.emit(f"Erreur extraction {entry.filename}: {e}")
             return None
