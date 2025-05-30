@@ -2,7 +2,21 @@ import urllib.request
 import zipfile
 from pathlib import Path
 import shutil
+import time
 from .config import REALESRGAN_DOWNLOAD_URL
+
+
+def download_with_retry(url: str, dest: Path, max_retries: int = 3) -> bool:
+    for attempt in range(max_retries):
+        try:
+            urllib.request.urlretrieve(url, dest)
+            return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            print(f"Échec téléchargement après {max_retries} tentatives: {e}")
+    return False
 
 
 def download_real_esrgan(dest_dir: Path, url: str = REALESRGAN_DOWNLOAD_URL) -> Path:
@@ -10,10 +24,7 @@ def download_real_esrgan(dest_dir: Path, url: str = REALESRGAN_DOWNLOAD_URL) -> 
     dest_dir.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir / "real-esrgan.zip"
     print(f"Téléchargement de Real-ESRGAN depuis {url}...")
-    try:
-        urllib.request.urlretrieve(url, zip_path)
-    except Exception as e:
-        print(f"Échec du téléchargement: {e}")
+    if not download_with_retry(url, zip_path):
         return dest_dir
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
