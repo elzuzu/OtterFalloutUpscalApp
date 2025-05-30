@@ -1,0 +1,10 @@
+{
+  "name": "character_upscale",
+  "nodes": [
+    {"id": 1, "type": "load_image", "path": "__INPUT_IMAGE__"},
+    {"id": 2, "type": "realesrgan", "model": "RealESRGAN_anime"},
+    {"id": 3, "type": "controlnet"},
+    {"id": 4, "type": "sharpen"},
+    {"id": 5, "type": "save_image", "path": "__OUTPUT_PATH__"}
+  ]
+}

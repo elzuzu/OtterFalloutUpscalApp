@@ -1,0 +1,10 @@
+{
+  "name": "scenery_upscale",
+  "nodes": [
+    {"id": 1, "type": "load_image", "path": "__INPUT_IMAGE__"},
+    {"id": 2, "type": "realesrgan"},
+    {"id": 3, "type": "denoise"},
+    {"id": 4, "type": "atmosphere"},
+    {"id": 5, "type": "save_image", "path": "__OUTPUT_PATH__"}
+  ]
+}
