@@ -7,6 +7,8 @@ from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import threading
+import time
+from collections import defaultdict
 from PIL import Image
 
 from PyQt6.QtWidgets import (
@@ -36,11 +38,13 @@ from .config import (
     setup_logging,
 )
 from .dat_tools import DatArchive, FRMConverter, ProcessingStats
-from .ai_scaler import AIScaler
+from .hybrid_upscaler import HybridUpscaler
+from .post_processor import IntelligentPostProcessor
+from .quality_metrics import QualityMetrics
 from .workers import TaskRunner, WorkerSignals
 from .git_utils import GitProgress
 from .validation import ValidationDialog
-from .asset_utils import detect_asset_type
+from .asset_utils import detect_asset_type_enhanced
 
 
 class FalloutUpscalerApp(QMainWindow):
@@ -384,14 +388,14 @@ class FalloutUpscalerApp(QMainWindow):
         return False
 
     def _create_preview_comparison(self, orig_dir: Path, upscaled_dir: Path) -> Path | None:
-        samples = list(orig_dir.glob("*.png"))[:9]
+        samples = list(orig_dir.rglob("*.png"))[:9]
         if not samples:
             return None
         grid_size = 3
         img_size = Image.open(samples[0]).size
         comparison = Image.new('RGB', (img_size[0] * grid_size * 2, img_size[1] * grid_size))
         for idx, orig_path in enumerate(samples):
-            up_path = upscaled_dir / orig_path.name
+            up_path = upscaled_dir / orig_path.relative_to(orig_dir)
             if not up_path.exists():
                 continue
             orig_img = Image.open(orig_path)
@@ -495,69 +499,66 @@ class FalloutUpscalerApp(QMainWindow):
             conv.load_palette(self.color_pal_path)
             conv.set_pil_palette_image_path(self.pil_palette_image_for_quantize)
             png_dir = self.workspace_dir / "png_orig"
-            png_dir_chars = png_dir / "characters"
-            png_dir_textures = png_dir / "textures"
             shutil.rmtree(png_dir, ignore_errors=True)
-            png_dir_chars.mkdir(parents=True, exist_ok=True)
-            png_dir_textures.mkdir(parents=True, exist_ok=True)
+            png_dir.mkdir(parents=True, exist_ok=True)
+
             grouped: Dict[str, List[Path]] = {}
             orig_map: Dict[str, Path] = {}
-            def conv_one(p: Path):
-                asset_type = detect_asset_type(p)
-                target_dir = png_dir_chars if asset_type == "character" else png_dir_textures
-                return p, conv.frm_to_png(p, target_dir)
-            with ThreadPoolExecutor(max_workers=CPU_WORKERS) as ex:
-                for i, (frm_p, pngs) in enumerate(ex.map(conv_one, all_frms), 1):
-                    base = frm_p.stem
-                    grouped.setdefault(base, []).extend(pngs)
-                    orig_map[base] = frm_p
-                    stats.processed_frms = i
-                    signals.progress.emit(30 + int((i / len(all_frms)) * 20))
-            signals.log.emit("Upscaling...")
+            assets_by_type: Dict[str, List[Path]] = defaultdict(list)
+            for frm in all_frms:
+                a_type, _ = detect_asset_type_enhanced(frm)
+                assets_by_type[a_type].append(frm)
+
+            processed = 0
+            for a_type, frm_list in assets_by_type.items():
+                target_dir = png_dir / a_type
+                target_dir.mkdir(parents=True, exist_ok=True)
+                def conv_one(p: Path):
+                    return p, conv.frm_to_png(p, target_dir)
+
+                with ThreadPoolExecutor(max_workers=CPU_WORKERS) as ex:
+                    for frm_p, pngs in ex.map(conv_one, frm_list):
+                        base = frm_p.stem
+                        grouped.setdefault(base, []).extend(pngs)
+                        orig_map[base] = frm_p
+                        processed += 1
+                        stats.processed_frms = processed
+                        signals.progress.emit(30 + int((processed / len(all_frms)) * 20))
+
+            signals.log.emit("Upscaling avec HybridUpscaler...")
             upscaled_dir = self.workspace_dir / "png_upscaled"
             shutil.rmtree(upscaled_dir, ignore_errors=True)
             upscaled_dir.mkdir(parents=True, exist_ok=True)
-            scaler_chars = AIScaler(
-                self.realesrgan_exe_path,
-                "realesrgan-x4plus-anime",
-                self.upscale_factor,
-                DEFAULT_GPU_ID,
-                signals,
-            )
-            scaler_textures = AIScaler(
-                self.realesrgan_exe_path,
-                self.realesrgan_model_name or "realesrgan-x4plus",
-                self.upscale_factor,
-                DEFAULT_GPU_ID,
-                signals,
-            )
-            if not scaler_chars.upscale_directory(png_dir_chars, upscaled_dir):
-                self.engine_stats["realesrgan"]["fail"] += 1
-                signals.error.emit("Upscaling échoué (characters)")
-                return
-            else:
+
+            hybrid_upscaler = HybridUpscaler(self.workspace_dir, signals)
+            post_processor = IntelligentPostProcessor()
+
+            for a_type in assets_by_type.keys():
+                src = png_dir / a_type
+                dst = upscaled_dir / a_type
+                dst.mkdir(parents=True, exist_ok=True)
+                if not hybrid_upscaler.smart_upscale(src, dst, a_type):
+                    self.engine_stats["realesrgan"]["fail"] += 1
+                    signals.error.emit(f"Upscaling échoué ({a_type})")
+                    continue
                 self.engine_stats["realesrgan"]["success"] += 1
-            if not scaler_textures.upscale_directory(png_dir_textures, upscaled_dir):
-                self.engine_stats["realesrgan"]["fail"] += 1
-                signals.error.emit("Upscaling échoué (textures)")
-                return
-            else:
-                self.engine_stats["realesrgan"]["success"] += 1
+                for img_path in dst.glob("*.png"):
+                    post_processor.enhance_by_type(img_path, a_type)
+                orig_sample = next(src.glob("*.png"), None)
+                if orig_sample:
+                    up_sample = dst / orig_sample.name
+                    if up_sample.exists():
+                        score = QualityMetrics.calculate_composite_score(orig_sample, up_sample, a_type)
+                        signals.log.emit(f"Qualité {a_type}: {score:.3f}")
+
             signals.progress.emit(70)
             self._create_preview_comparison(png_dir, upscaled_dir)
-            signals.request_validation.emit(str(png_dir), str(upscaled_dir))
-            self.validation_event.clear()
-            self.validation_event.wait()
-            if not self.validation_result:
-                shutil.rmtree(upscaled_dir, ignore_errors=True)
-                signals.log.emit("Upscaling rejeté par l'utilisateur")
-                return
             signals.log.emit("Conversion PNG -> FRM...")
             out_dir = self.workspace_dir / "frm_final"
             shutil.rmtree(out_dir, ignore_errors=True)
             out_dir.mkdir(parents=True, exist_ok=True)
             up_grouped: Dict[str, List[Path]] = {}
-            for up in upscaled_dir.glob("*.png"):
+            for up in upscaled_dir.rglob("*.png"):
                 base = up.stem.split('_d')[0]
                 up_grouped.setdefault(base, []).append(up)
             def rebuild(item):
