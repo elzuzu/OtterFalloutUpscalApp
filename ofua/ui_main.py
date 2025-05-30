@@ -23,6 +23,7 @@ from .ai_scaler import AIScaler
 from .workers import TaskRunner, WorkerSignals
 from .git_utils import GitProgress
 from .validation import ValidationDialog
+from .asset_utils import detect_asset_type
 
 
 class FalloutUpscalerApp(QMainWindow):
@@ -194,7 +195,7 @@ class FalloutUpscalerApp(QMainWindow):
         self._save_settings()
 
     def _on_request_validation(self, orig_dir: str, upscaled_dir: str):
-        origs = sorted(Path(orig_dir).glob("*.png"))
+        origs = sorted(Path(orig_dir).rglob("*.png"))
         ups = sorted(Path(upscaled_dir).glob("*.png"))
         dialog = ValidationDialog(origs[:min(20, len(origs))], ups[:min(20, len(ups))])
         result = dialog.exec()
@@ -258,12 +259,17 @@ class FalloutUpscalerApp(QMainWindow):
             conv.load_palette(self.color_pal_path)
             conv.set_pil_palette_image_path(self.pil_palette_image_for_quantize)
             png_dir = self.workspace_dir / "png_orig"
+            png_dir_chars = png_dir / "characters"
+            png_dir_textures = png_dir / "textures"
             shutil.rmtree(png_dir, ignore_errors=True)
-            png_dir.mkdir(parents=True, exist_ok=True)
+            png_dir_chars.mkdir(parents=True, exist_ok=True)
+            png_dir_textures.mkdir(parents=True, exist_ok=True)
             grouped: Dict[str, List[Path]] = {}
             orig_map: Dict[str, Path] = {}
-            def conv_one(p):
-                return p, conv.frm_to_png(p, png_dir)
+            def conv_one(p: Path):
+                asset_type = detect_asset_type(p)
+                target_dir = png_dir_chars if asset_type == "character" else png_dir_textures
+                return p, conv.frm_to_png(p, target_dir)
             with ThreadPoolExecutor(max_workers=CPU_WORKERS) as ex:
                 for i, (frm_p, pngs) in enumerate(ex.map(conv_one, all_frms), 1):
                     base = frm_p.stem
@@ -274,9 +280,13 @@ class FalloutUpscalerApp(QMainWindow):
             upscaled_dir = self.workspace_dir / "png_upscaled"
             shutil.rmtree(upscaled_dir, ignore_errors=True)
             upscaled_dir.mkdir(parents=True, exist_ok=True)
-            scaler = AIScaler(self.realesrgan_exe_path, self.realesrgan_model_name or '', self.upscale_factor, DEFAULT_GPU_ID, signals)
-            if not scaler.upscale_directory(png_dir, upscaled_dir):
-                signals.error.emit("Upscaling échoué")
+            scaler_chars = AIScaler(self.realesrgan_exe_path, "realesrgan-x4plus-anime", self.upscale_factor, DEFAULT_GPU_ID, signals)
+            scaler_textures = AIScaler(self.realesrgan_exe_path, self.realesrgan_model_name or 'realesrgan-x4plus', self.upscale_factor, DEFAULT_GPU_ID, signals)
+            if not scaler_chars.upscale_directory(png_dir_chars, upscaled_dir):
+                signals.error.emit("Upscaling échoué (characters)")
+                return
+            if not scaler_textures.upscale_directory(png_dir_textures, upscaled_dir):
+                signals.error.emit("Upscaling échoué (textures)")
                 return
             signals.progress.emit(70)
             signals.request_validation.emit(str(png_dir), str(upscaled_dir))
