@@ -4,9 +4,30 @@ from typing import List, Dict, Tuple, Optional
 import os
 import struct
 import zlib
+import time
 from PIL import Image, ImagePalette
 from PyQt6.QtWidgets import QApplication
 from .workers import WorkerSignals
+
+
+class PaletteCache:
+    """Caches palettes to avoid reloading them."""
+    _cache: Dict[str, ImagePalette.ImagePalette] = {}
+
+    @classmethod
+    def get_palette(cls, pal_path: Path) -> ImagePalette.ImagePalette:
+        key = str(pal_path)
+        if key not in cls._cache:
+            with open(pal_path, 'rb') as f:
+                data = f.read(768)
+            pal_list = []
+            for i in range(0, 768, 3):
+                r, g, b = data[i:i+3]
+                pal_list.extend([r * 4, g * 4, b * 4])
+            while len(pal_list) < 768:
+                pal_list.append(0)
+            cls._cache[key] = ImagePalette.raw("RGB", bytes(pal_list))
+        return cls._cache[key]
 
 
 @dataclass
@@ -38,6 +59,22 @@ class FRMData:
     num_directions: int = 6
     directions_data: List[List[FRMFrame]] = field(default_factory=lambda: [[] for _ in range(6)])
     palette: Optional[ImagePalette.ImagePalette] = None
+
+
+@dataclass
+class ProcessingStats:
+    total_frms: int = 0
+    processed_frms: int = 0
+    failed_frms: int = 0
+    start_time: float = 0.0
+
+    def estimate_remaining_time(self) -> str:
+        if self.processed_frms == 0:
+            return "Calcul en cours..."
+        elapsed = time.time() - self.start_time
+        rate = self.processed_frms / elapsed
+        remaining = (self.total_frms - self.processed_frms) / rate
+        return f"{remaining/60:.1f} minutes"
 
 
 class DatArchive:
@@ -212,6 +249,16 @@ class FRMConverter:
     def set_pil_palette_image_path(self, path: Path):
         self.pil_palette_image_path = path
 
+    def _validate_frm_file(self, frm_path: Path) -> bool:
+        """Validate that a FRM file looks valid."""
+        try:
+            with open(frm_path, 'rb') as f:
+                if f.seek(0, os.SEEK_END) < 62:
+                    return False
+            return True
+        except Exception:
+            return False
+
     def frm_to_png(self, frm_filepath: Path, output_dir_png: Path) -> List[Path]:
         if not self.pil_palette:
             self._log("Erreur: Palette non chargée.")
@@ -251,6 +298,8 @@ class FRMConverter:
                         output_png_path = output_dir_png / png_filename
                         output_png_path.parent.mkdir(parents=True, exist_ok=True)
                         image.save(output_png_path)
+                        image.close()
+                        del image
                         png_files.append(output_png_path)
             return png_files
         except Exception as e:
@@ -259,7 +308,18 @@ class FRMConverter:
                 self._signals.error.emit(f"Erreur conversion {frm_filepath.name}: {e}")
             return []
 
-    def png_to_frm(self, input_png_files_grouped: Dict[str, List[Path]], output_frm_dir: Path, original_frm_path: Path) -> Optional[Path]:
+    def png_to_frm(self, input_png_files_grouped: Dict[str, List[Path]], 
+                   output_frm_dir: Path, original_frm_path: Path) -> Optional[Path]:
+        """Convert upscaled PNG images back to a FRM file.
+
+        Args:
+            input_png_files_grouped: Dict mapping FRM base names to PNG file paths
+            output_frm_dir: Directory where the resulting FRM should be stored
+            original_frm_path: Path to the original FRM for metadata
+
+        Returns:
+            Path to the created FRM or None on failure
+        """
         if not self.pil_palette:
             self._log("Erreur: Palette non chargée.")
             return None

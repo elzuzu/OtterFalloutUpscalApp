@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import threading
+from PIL import Image
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
@@ -16,9 +17,10 @@ from PyQt6.QtCore import QThreadPool, pyqtSlot
 
 from .config import (
     FALLOUT_CE_REPO_URL, DEFAULT_WORKSPACE_DIR, DEFAULT_REALESRGAN_EXE,
-    DEFAULT_REALESRGAN_MODEL, DEFAULT_UPSCALE_FACTOR, CPU_WORKERS, DEFAULT_GPU_ID
+    DEFAULT_REALESRGAN_MODEL, DEFAULT_UPSCALE_FACTOR, CPU_WORKERS, DEFAULT_GPU_ID,
+    setup_logging,
 )
-from .dat_tools import DatArchive, FRMConverter
+from .dat_tools import DatArchive, FRMConverter, ProcessingStats
 from .ai_scaler import AIScaler
 from .workers import TaskRunner, WorkerSignals
 from .git_utils import GitProgress
@@ -48,6 +50,7 @@ class FalloutUpscalerApp(QMainWindow):
         self.validation_result: Optional[bool] = None
         self._init_ui()
         self._load_settings()
+        setup_logging(self.workspace_dir)
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -177,6 +180,9 @@ class FalloutUpscalerApp(QMainWindow):
 
     def _start_full_process(self):
         self._update_config_from_ui()
+        if not self._validate_config():
+            return
+        self._check_previous_session()
         self.start_button.setEnabled(False)
         self.progress_bar.setValue(0)
         worker = TaskRunner(self._run_full_pipeline_task)
@@ -194,6 +200,62 @@ class FalloutUpscalerApp(QMainWindow):
         self.upscale_factor = self.upscale_factor_edit.text()
         self._save_settings()
 
+    def _create_backup(self) -> bool:
+        backup_dir = self.workspace_dir / "backup"
+        if self.fallout_ce_cloned_path and self.fallout_ce_cloned_path.exists():
+            try:
+                shutil.copytree(self.fallout_ce_cloned_path, backup_dir / "original", dirs_exist_ok=True)
+                return True
+            except Exception as e:
+                self.log_message(f"Échec sauvegarde: {e}")
+        return False
+
+    def _create_preview_comparison(self, orig_dir: Path, upscaled_dir: Path) -> Path | None:
+        samples = list(orig_dir.glob("*.png"))[:9]
+        if not samples:
+            return None
+        grid_size = 3
+        img_size = Image.open(samples[0]).size
+        comparison = Image.new('RGB', (img_size[0] * grid_size * 2, img_size[1] * grid_size))
+        for idx, orig_path in enumerate(samples):
+            up_path = upscaled_dir / orig_path.name
+            if not up_path.exists():
+                continue
+            orig_img = Image.open(orig_path)
+            up_img = Image.open(up_path)
+            x = (idx % grid_size) * img_size[0] * 2
+            y = (idx // grid_size) * img_size[1]
+            comparison.paste(orig_img, (x, y))
+            comparison.paste(up_img, (x + img_size[0], y))
+            orig_img.close()
+            up_img.close()
+        output = self.workspace_dir / "preview_comparison.png"
+        comparison.save(output)
+        comparison.close()
+        return output
+
+    def _check_previous_session(self) -> bool:
+        state_file = self.workspace_dir / ".session_state.json"
+        if state_file.exists():
+            reply = QMessageBox.question(
+                self,
+                "Session précédente",
+                "Reprendre la session précédente ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            return reply == QMessageBox.StandardButton.Yes
+        return True
+
+    def _validate_config(self) -> bool:
+        """Validate user configuration before starting."""
+        if not self.workspace_dir or not self.workspace_dir.exists():
+            QMessageBox.warning(self, "Erreur", "Workspace invalide")
+            return False
+        if not self.realesrgan_exe_path or not self.realesrgan_exe_path.exists():
+            QMessageBox.warning(self, "Erreur", "Real-ESRGAN introuvable")
+            return False
+        return True
+
     def _on_request_validation(self, orig_dir: str, upscaled_dir: str):
         origs = sorted(Path(orig_dir).rglob("*.png"))
         ups = sorted(Path(upscaled_dir).glob("*.png"))
@@ -204,6 +266,7 @@ class FalloutUpscalerApp(QMainWindow):
 
     def _run_full_pipeline_task(self, signals: WorkerSignals):
         try:
+            self._create_backup()
             signals.log.emit("Clonage/Mise à jour du dépôt...")
             signals.progress.emit(5)
             self.fallout_ce_cloned_path = self.workspace_dir / "fallout1-ce"
@@ -239,6 +302,7 @@ class FalloutUpscalerApp(QMainWindow):
                     all_frms.extend(frms_crit)
                     if pal_crit and not self.color_pal_path:
                         self.color_pal_path = pal_crit
+            stats = ProcessingStats(total_frms=len(all_frms), start_time=time.time())
             if not self.color_pal_path:
                 signals.error.emit("COLOR.PAL manquant")
                 return
@@ -250,7 +314,6 @@ class FalloutUpscalerApp(QMainWindow):
                 pal_list.extend([r * 4, g * 4, b * 4])
             while len(pal_list) < 768:
                 pal_list.append(0)
-            from PIL import Image
             img = Image.new('P', (16, 16))
             img.putpalette(pal_list)
             img.save(self.pil_palette_image_for_quantize)
@@ -275,6 +338,7 @@ class FalloutUpscalerApp(QMainWindow):
                     base = frm_p.stem
                     grouped.setdefault(base, []).extend(pngs)
                     orig_map[base] = frm_p
+                    stats.processed_frms = i
                     signals.progress.emit(30 + int((i / len(all_frms)) * 20))
             signals.log.emit("Upscaling...")
             upscaled_dir = self.workspace_dir / "png_upscaled"
@@ -289,6 +353,7 @@ class FalloutUpscalerApp(QMainWindow):
                 signals.error.emit("Upscaling échoué (textures)")
                 return
             signals.progress.emit(70)
+            self._create_preview_comparison(png_dir, upscaled_dir)
             signals.request_validation.emit(str(png_dir), str(upscaled_dir))
             self.validation_event.clear()
             self.validation_event.wait()
