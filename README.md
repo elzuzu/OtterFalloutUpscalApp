@@ -49,34 +49,17 @@
 * **Palette pour la quantification :** La méthode `Image.quantize(palette=Image.open(self.pil_palette_image_path))` est utilisée. La qualité de la quantification est cruciale. `dither=Image.Dither.FLOYDSTEINBERG` aide.
 * **Détection automatique du type d'asset :** Les fichiers FRM sont désormais catégorisés (personnages ou textures) selon leur chemin. Des modèles Real-ESRGAN différents sont appliqués automatiquement pour chaque catégorie.
 
-J'espère que cette application vous sera un excellent point de départ ! N'hésitez pas si vous avez des questions ou si vous rencontrez des problèmes.Okay, I've generated a comprehensive Python application with a PyQt6 GUI that aims to automate the Fallout 1 CE asset upscaling process as you described.
+## Nouvelles fonctionnalités
 
-The application includes:
-1.  A user interface for configuration and monitoring.
-2.  Git cloning/updating for the Fallout 1 CE repository.
-3.  Extraction of `master.dat` and `critter.dat` files.
-4.  Conversion of Fallout's `.FRM` image files to `.PNG`.
-5.  A mechanism to call an external Real-ESRGAN executable for the actual AI upscaling.
-6.  Conversion of the upscaled `.PNG` images back to `.FRM`, attempting to use the game's original color palette.
-7.  Saving of the new `.FRM` files into an organized output directory.
-8.  Logging and progress bar feedback.
+* **Détection améliorée des assets** grâce à l'analyse d'image et à de nouveaux motifs de chemin.
+* **Pipeline `HybridUpscaler`** combinant Upscayl, ComfyUI et Real‑ESRGAN selon le type d'asset avec validation de qualité (SSIM/PSNR).
+* **Profils configurables** : les paramètres des moteurs et leurs seuils peuvent être sauvegardés dans `~/.ofua_profiles`. Des profils `speed`, `quality`, `balanced` et `fallout_optimized` sont inclus.
+* **Script `setup_enhanced.py`** pour préparer automatiquement l'environnement (installation des dépendances et vérifications système).
 
-You'll find the Python code in the immersive document block.
+Pour exécuter ce script :
 
-**Before you run it, please note these important points:**
+```bash
+python setup_enhanced.py
+```
 
-* **Real-ESRGAN is External:** The Python script *does not* include Real-ESRGAN itself. You need to:
-    * Download the `realesrgan-ncnn-vulkan.exe` (for Windows) and corresponding model files (`.param` and `.bin`) from the [official Real-ESRGAN GitHub releases](https://github.com/xinntao/Real-ESRGAN/releases) or another trusted source.
-    * A model specifically trained or suited for pixel art/retro games is highly recommended for best results (e.g., something other than the generic photo or anime models, though `realesrgan-x4plus` or `realesrgan-x4plus-anime` can be starting points).
-* **Configuration is Key:** You *must* configure the paths to your Real-ESRGAN executable and the name of the model you wish to use within the application's UI. These settings are saved for future sessions.
-* **`COLOR.PAL` is Crucial:** The application attempts to extract `COLOR.PAL` from `master.dat` or find it in the cloned game's `data` directory. This palette file is essential for correct color handling during the FRM-PNG-FRM conversions.
-* **Backup Your Game:** **Always, always, always back up your Fallout 1 CE game installation before replacing any game files with upscaled assets.**
-* **Output:** The application will output the upscaled `.FRM` files into a structured directory (e.g., `workspace/frm_upscaled_final/master/art/critters/`). You would then manually copy these into your Fallout 1 CE game directory, ideally into a location the engine checks for overrides (like a `data` folder or a specific `mods` folder if supported by Fallout 1 CE). The application does *not* repack the `.DAT` files.
-* **Dependencies:** You'll need to install `PyQt6`, `Pillow`, `numpy`, and `GitPython`. You can do this via pip:
-    ```bash
-    pip install PyQt6 Pillow numpy GitPython
-    ```
-
-I've tried to make the code as robust as possible, including error handling and user feedback. The process of extracting proprietary game formats, converting, upscaling, and reconverting can be complex, so there might be edge cases or specific files that present challenges.
-
-Let me know if you have any questions as you get it set up and runni
+N'hésitez pas à créer vos propres profils pour adapter vitesse et qualité. Pour toute question, ouvrez un ticket sur le dépôt.
