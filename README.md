@@ -8,7 +8,8 @@
         ```
 
 2.  **Télécharger Real-ESRGAN :**
-    * Vous pouvez récupérer automatiquement l'exécutable avec :
+    * L'application vérifie automatiquement la présence de l'exécutable et du modèle. S'ils sont absents, ils seront téléchargés dans le répertoire du projet.
+    * Vous pouvez tout de même déclencher manuellement le téléchargement avec :
         ```bash
         python OFUA.py --download-real-esrgan chemin/vers/dossier
         ```
