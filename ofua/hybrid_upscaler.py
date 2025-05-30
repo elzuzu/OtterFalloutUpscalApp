@@ -13,6 +13,7 @@ from .workers import WorkerSignals
 from .ai_scaler import AIScaler
 from .config import DEFAULT_GPU_ID
 from .engines.upscayl_engine import UpscaylEngine
+from .engines.comfyui_engine import ComfyUIEngine
 
 
 class UpscalerEngine(Enum):
@@ -34,21 +35,6 @@ ASSET_PROFILES: Dict[str, AssetProfile] = {
     "items": AssetProfile(UpscalerEngine.UPSCAYL, UpscalerEngine.REALESRGAN),
     "scenery": AssetProfile(UpscalerEngine.COMFYUI, UpscalerEngine.REALESRGAN),
 }
-
-
-class ComfyUIEngine:
-    def __init__(self, signals: Optional[WorkerSignals] = None):
-        self._signals = signals
-
-    def _log(self, message: str):
-        if self._signals:
-            self._signals.log.emit(message)
-        else:
-            print(message)
-
-    def upscale(self, input_dir: Path, output_dir: Path) -> bool:
-        self._log("ComfyUI engine not implemented.")
-        return False
 
 
 class RealESRGANEngine:

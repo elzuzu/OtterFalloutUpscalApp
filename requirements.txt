@@ -6,3 +6,4 @@ psutil
 opencv-python
 scikit-image
 
+requests
