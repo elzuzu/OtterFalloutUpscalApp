@@ -31,6 +31,8 @@ DEFAULT_WORKSPACE_DIR = Path("./fallout_upscaler_workspace")
 DEFAULT_REALESRGAN_EXE = "" # À remplir par l'utilisateur via l'UI
 DEFAULT_REALESRGAN_MODEL = "" # À remplir par l'utilisateur via l'UI (nom du modèle sans extension)
 DEFAULT_UPSCALE_FACTOR = "4" # Facteur d'upscale pour Real-ESRGAN
+CPU_WORKERS = os.cpu_count() or 4  # Utilisé pour les conversions parallèles
+DEFAULT_GPU_ID = 0  # GPU à utiliser avec Real-ESRGAN
 
 # --- Classes de Données ---
 @dataclass
@@ -567,10 +569,11 @@ class FRMConverter:
 # --- Upscaler IA (via CLI Real-ESRGAN) ---
 class AIScaler:
     """Gère l'upscaling des images via un outil CLI."""
-    def __init__(self, realesrgan_exe: Path, model_name: str, scale_factor: str, signals: Optional[WorkerSignals] = None):
+    def __init__(self, realesrgan_exe: Path, model_name: str, scale_factor: str, gpu_id: int = DEFAULT_GPU_ID, signals: Optional[WorkerSignals] = None):
         self.realesrgan_exe = Path(realesrgan_exe)
         self.model_name = model_name
         self.scale_factor = scale_factor
+        self.gpu_id = gpu_id
         self._signals = signals
 
     def _log(self, message: str):
@@ -608,7 +611,8 @@ class AIScaler:
             "-o", str(output_dir_upscaled_png),
             "-n", self.model_name,
             "-s", self.scale_factor,
-            "-f", "png" # Spécifier le format de sortie
+            "-f", "png", # Spécifier le format de sortie
+            "-g", str(self.gpu_id)
         ]
         
         self._log(f"Lancement de Real-ESRGAN: {' '.join(command)}")
@@ -983,26 +987,22 @@ class FalloutUpscalerApp(QMainWindow):
 
 
             total_frms = len(all_extracted_frms)
-            for i, frm_path in enumerate(all_extracted_frms):
-                # Créer un sous-dossier dans png_output_dir pour chaque FRM pour éviter les collisions de noms de frames
-                relative_frm_path_from_extracted = frm_path.relative_to(extracted_assets_dir)
-                # ex: master/art/critters/MYCRITTR.FRM -> master_art_critters_MYCRITTR
-                # Ou plus simple, juste le nom du FRM, et on gère les collisions si nécessaire (peu probable pour les frames)
-                # Pour l'upscaling en batch, un seul dossier d'entrée pour RealESRGAN est mieux.
-                
-                # Pour l'instant, mettons tout dans png_output_dir, les noms de frames devraient être uniques.
-                pngs_for_this_frm = frm_converter.frm_to_png(frm_path, png_output_dir)
-                
-                # Regrouper les PNGs par nom de base du FRM original
-                frm_base_name = frm_path.stem
-                if frm_base_name not in all_png_files_grouped_by_frm:
-                    all_png_files_grouped_by_frm[frm_base_name] = []
-                all_png_files_grouped_by_frm[frm_base_name].extend(pngs_for_this_frm)
-                original_frm_paths_map[frm_base_name] = frm_path
 
+            def convert_one(frm_path: Path):
+                pngs = frm_converter.frm_to_png(frm_path, png_output_dir)
+                return frm_path, pngs
 
-                signals.progress.emit(30 + int((i / total_frms) * 20)) # Progression de 30% à 50%
-                if i % 50 == 0 : signals.log.emit(f"Converti {i}/{total_frms} FRMs en PNG...")
+            with ThreadPoolExecutor(max_workers=CPU_WORKERS) as ex:
+                for i, (frm_path, pngs_for_this_frm) in enumerate(ex.map(convert_one, all_extracted_frms), 1):
+                    frm_base_name = frm_path.stem
+                    if frm_base_name not in all_png_files_grouped_by_frm:
+                        all_png_files_grouped_by_frm[frm_base_name] = []
+                    all_png_files_grouped_by_frm[frm_base_name].extend(pngs_for_this_frm)
+                    original_frm_paths_map[frm_base_name] = frm_path
+
+                    signals.progress.emit(30 + int((i / total_frms) * 20))
+                    if i % 50 == 0:
+                        signals.log.emit(f"Converti {i}/{total_frms} FRMs en PNG...")
             signals.log.emit("Conversion FRM -> PNG terminée.")
             signals.progress.emit(50)
 
@@ -1012,7 +1012,7 @@ class FalloutUpscalerApp(QMainWindow):
             shutil.rmtree(upscaled_png_output_dir, ignore_errors=True)
             upscaled_png_output_dir.mkdir(parents=True, exist_ok=True)
 
-            scaler = AIScaler(self.realesrgan_exe_path, self.realesrgan_model_name, self.upscale_factor, signals)
+            scaler = AIScaler(self.realesrgan_exe_path, self.realesrgan_model_name, self.upscale_factor, gpu_id=DEFAULT_GPU_ID, signals=signals)
             if not scaler.upscale_directory(png_output_dir, upscaled_png_output_dir):
                 signals.error.emit("Échec de l'étape d'upscaling.")
                 return
@@ -1038,22 +1038,23 @@ class FalloutUpscalerApp(QMainWindow):
 
             total_original_frms_to_repack = len(original_frm_paths_map)
             repacked_count = 0
-            for frm_base_name, original_frm_path_val in original_frm_paths_map.items():
+
+            def rebuild_task(item):
+                frm_base_name, original_frm_path_val = item
                 if frm_base_name in upscaled_png_files_grouped_by_frm:
-                    # Déterminer le chemin de sortie relatif pour le nouveau FRM
-                    # ex: si original_frm_path_val était extracted_assets/master/art/critters/X.FRM
-                    # alors le nouveau FRM doit aller dans final_frm_output_dir/master/art/critters/X.FRM
                     relative_path_structure = original_frm_path_val.relative_to(extracted_assets_dir)
                     output_subdir_for_frm = final_frm_output_dir / relative_path_structure.parent
                     output_subdir_for_frm.mkdir(parents=True, exist_ok=True)
-                    
                     frm_converter.png_to_frm(upscaled_png_files_grouped_by_frm, output_subdir_for_frm, original_frm_path_val)
                 else:
                     signals.log.emit(f"Avertissement: Aucun PNG upscalé trouvé pour {frm_base_name}, FRM original non recréé.")
-                
-                repacked_count += 1
-                signals.progress.emit(75 + int((repacked_count / total_original_frms_to_repack) * 25)) # Progression de 75% à 100%
-                if repacked_count % 20 == 0: signals.log.emit(f"Reconverti {repacked_count}/{total_original_frms_to_repack} FRMs...")
+
+            with ThreadPoolExecutor(max_workers=CPU_WORKERS) as ex:
+                for i, _ in enumerate(ex.map(rebuild_task, original_frm_paths_map.items()), 1):
+                    repacked_count = i
+                    signals.progress.emit(75 + int((repacked_count / total_original_frms_to_repack) * 25))
+                    if repacked_count % 20 == 0:
+                        signals.log.emit(f"Reconverti {repacked_count}/{total_original_frms_to_repack} FRMs...")
 
             signals.log.emit("Conversion PNG upscalés -> FRM terminée.")
             signals.log.emit(f"Les fichiers FRM upscalés sont dans: {final_frm_output_dir}")
