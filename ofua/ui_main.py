@@ -10,10 +10,25 @@ import threading
 from PIL import Image
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
-    QProgressBar, QLineEdit, QFileDialog, QLabel, QMessageBox, QGroupBox, QSplitter
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QTextEdit,
+    QProgressBar,
+    QLineEdit,
+    QFileDialog,
+    QLabel,
+    QMessageBox,
+    QGroupBox,
+    QSplitter,
+    QTabWidget,
+    QComboBox,
+    QSlider,
+    QCheckBox,
 )
-from PyQt6.QtCore import QThreadPool, pyqtSlot
+from PyQt6.QtCore import QThreadPool, pyqtSlot, QTimer, Qt
 
 from .config import (
     FALLOUT_CE_REPO_URL, DEFAULT_WORKSPACE_DIR, DEFAULT_REALESRGAN_EXE,
@@ -48,6 +63,12 @@ class FalloutUpscalerApp(QMainWindow):
         self.log_messages = []
         self.validation_event = threading.Event()
         self.validation_result: Optional[bool] = None
+        self.engine_settings: Dict[str, Dict[str, object]] = {}
+        self.engine_stats: Dict[str, Dict[str, int]] = {
+            "realesrgan": {"success": 0, "fail": 0},
+            "upscayl": {"success": 0, "fail": 0},
+            "comfyui": {"success": 0, "fail": 0},
+        }
         self._init_ui()
         self._load_settings()
         setup_logging(self.workspace_dir)
@@ -56,6 +77,22 @@ class FalloutUpscalerApp(QMainWindow):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         layout = QVBoxLayout(main_widget)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._create_general_tab(), "Général")
+        self.tabs.addTab(self._create_engines_tab(), "Moteurs")
+        self.tabs.addTab(self._create_monitoring_tab(), "Monitoring")
+        layout.addWidget(self.tabs)
+
+        self.monitor_timer = QTimer()
+        self.monitor_timer.timeout.connect(self._update_monitoring)
+        self.monitor_timer.start(1000)
+
+        self.log_message("Application prête.")
+
+    def _create_general_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
 
         config_group = QGroupBox("Configuration")
         config_layout = QVBoxLayout()
@@ -71,7 +108,9 @@ class FalloutUpscalerApp(QMainWindow):
 
         exe_layout = QHBoxLayout()
         exe_layout.addWidget(QLabel("Real-ESRGAN:"))
-        self.realesrgan_exe_edit = QLineEdit(str(self.realesrgan_exe_path) if self.realesrgan_exe_path else "")
+        self.realesrgan_exe_edit = QLineEdit(
+            str(self.realesrgan_exe_path) if self.realesrgan_exe_path else ""
+        )
         btn_exe = QPushButton("Choisir")
         btn_exe.clicked.connect(self._select_realesrgan_exe)
         exe_layout.addWidget(self.realesrgan_exe_edit)
@@ -93,6 +132,21 @@ class FalloutUpscalerApp(QMainWindow):
         config_group.setLayout(config_layout)
         layout.addWidget(config_group)
 
+        buttons_layout = QHBoxLayout()
+        save_btn = QPushButton("Sauver Profil")
+        load_btn = QPushButton("Charger Profil")
+        export_btn = QPushButton("Exporter JSON")
+        import_btn = QPushButton("Importer JSON")
+        reset_btn = QPushButton("Reset")
+        save_btn.clicked.connect(self.save_profile)
+        load_btn.clicked.connect(self.load_profile)
+        export_btn.clicked.connect(self.export_settings)
+        import_btn.clicked.connect(self.import_settings)
+        reset_btn.clicked.connect(self.reset_defaults)
+        for b in [save_btn, load_btn, export_btn, import_btn, reset_btn]:
+            buttons_layout.addWidget(b)
+        layout.addLayout(buttons_layout)
+
         self.start_button = QPushButton("Démarrer")
         self.start_button.clicked.connect(self._start_full_process)
         layout.addWidget(self.start_button)
@@ -113,7 +167,56 @@ class FalloutUpscalerApp(QMainWindow):
 
         layout.addWidget(splitter)
 
-        self.log_message("Application prête.")
+        return widget
+
+    def _create_engines_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        self.engine_widgets = {}
+        engines = ["realesrgan", "upscayl", "comfyui"]
+        for asset_type in ["character", "interface", "items", "scenery"]:
+            grp = QGroupBox(asset_type.capitalize())
+            grp_lay = QHBoxLayout()
+            prim = QComboBox()
+            prim.addItems(engines)
+            fall = QComboBox()
+            fall.addItems(["none"] + engines)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(70)
+            chk = QCheckBox("Avancé")
+            grp_lay.addWidget(QLabel("Moteur"))
+            grp_lay.addWidget(prim)
+            grp_lay.addWidget(QLabel("Fallback"))
+            grp_lay.addWidget(fall)
+            grp_lay.addWidget(QLabel("Seuil"))
+            grp_lay.addWidget(slider)
+            grp_lay.addWidget(chk)
+            grp.setLayout(grp_lay)
+            layout.addWidget(grp)
+            self.engine_widgets[asset_type] = {
+                "primary": prim,
+                "fallback": fall,
+                "threshold": slider,
+                "advanced": chk,
+            }
+        layout.addStretch()
+        return widget
+
+    def _create_monitoring_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        self.monitor_text = QTextEdit()
+        self.monitor_text.setReadOnly(True)
+        layout.addWidget(self.monitor_text)
+        return widget
+
+    def _update_monitoring(self):
+        lines = []
+        for engine, stats in self.engine_stats.items():
+            line = f"{engine}: {stats['success']} succès / {stats['fail']} échecs"
+            lines.append(line)
+        self.monitor_text.setPlainText("\n".join(lines))
 
     def _select_workspace_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "Workspace", str(self.workspace_dir))
@@ -132,29 +235,91 @@ class FalloutUpscalerApp(QMainWindow):
     def _settings_file(self) -> Path:
         return Path.home() / ".ofua_settings.json"
 
-    def _save_settings(self):
-        settings = {
+    def _collect_settings(self) -> Dict[str, object]:
+        engines_cfg = {}
+        for asset, widgets in getattr(self, "engine_widgets", {}).items():
+            engines_cfg[asset] = {
+                "primary": widgets["primary"].currentText(),
+                "fallback": widgets["fallback"].currentText(),
+                "threshold": widgets["threshold"].value(),
+                "advanced": widgets["advanced"].isChecked(),
+            }
+        return {
             "workspace": str(self.workspace_dir),
             "realesrgan_exe": str(self.realesrgan_exe_path) if self.realesrgan_exe_path else "",
             "realesrgan_model": self.realesrgan_model_name or "",
             "factor": self.upscale_factor,
+            "engines": engines_cfg,
         }
-        self._settings_file().write_text(json.dumps(settings))
+
+    def _apply_settings(self, data: Dict[str, object]):
+        self.workspace_dir = Path(data.get("workspace", str(self.workspace_dir)))
+        exe = data.get("realesrgan_exe") or ""
+        self.realesrgan_exe_path = Path(exe) if exe else None
+        self.realesrgan_model_name = data.get("realesrgan_model") or None
+        self.upscale_factor = data.get("factor", self.upscale_factor)
+        engines_cfg = data.get("engines", {})
+        for asset, widgets in getattr(self, "engine_widgets", {}).items():
+            cfg = engines_cfg.get(asset, {})
+            widgets["primary"].setCurrentText(cfg.get("primary", "realesrgan"))
+            widgets["fallback"].setCurrentText(cfg.get("fallback", "none"))
+            widgets["threshold"].setValue(int(cfg.get("threshold", 70)))
+            widgets["advanced"].setChecked(bool(cfg.get("advanced", False)))
+        self.workspace_edit.setText(str(self.workspace_dir))
+        self.realesrgan_exe_edit.setText(str(self.realesrgan_exe_path) if self.realesrgan_exe_path else "")
+        self.realesrgan_model_edit.setText(self.realesrgan_model_name or "")
+        self.upscale_factor_edit.setText(self.upscale_factor)
+
+    def _save_settings(self):
+        self._settings_file().write_text(json.dumps(self._collect_settings()))
 
     def _load_settings(self):
         try:
             data = json.loads(self._settings_file().read_text())
-            self.workspace_dir = Path(data.get("workspace", str(self.workspace_dir)))
-            exe = data.get("realesrgan_exe")
-            self.realesrgan_exe_path = Path(exe) if exe else None
-            self.realesrgan_model_name = data.get("realesrgan_model") or None
-            self.upscale_factor = data.get("factor", self.upscale_factor)
-            self.workspace_edit.setText(str(self.workspace_dir))
-            self.realesrgan_exe_edit.setText(str(self.realesrgan_exe_path) if self.realesrgan_exe_path else "")
-            self.realesrgan_model_edit.setText(self.realesrgan_model_name or "")
-            self.upscale_factor_edit.setText(self.upscale_factor)
+            self._apply_settings(data)
         except Exception:
             pass
+
+    def save_profile(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Enregistrer profil", str(self.workspace_dir), "JSON (*.json)")
+        if path:
+            Path(path).write_text(json.dumps(self._collect_settings(), indent=2))
+
+    def load_profile(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Charger profil", str(self.workspace_dir), "JSON (*.json)")
+        if path:
+            try:
+                data = json.loads(Path(path).read_text())
+                self._apply_settings(data)
+            except Exception as exc:
+                QMessageBox.warning(self, "Erreur", str(exc))
+
+    def export_settings(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Exporter paramètres", str(self.workspace_dir), "JSON (*.json)")
+        if path:
+            Path(path).write_text(json.dumps(self._collect_settings(), indent=2))
+
+    def import_settings(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Importer paramètres", str(self.workspace_dir), "JSON (*.json)")
+        if path:
+            try:
+                data = json.loads(Path(path).read_text())
+                self._apply_settings(data)
+            except Exception as exc:
+                QMessageBox.warning(self, "Erreur", str(exc))
+
+    def reset_defaults(self):
+        defaults = {
+            "workspace": str(DEFAULT_WORKSPACE_DIR),
+            "realesrgan_exe": "",
+            "realesrgan_model": "",
+            "factor": DEFAULT_UPSCALE_FACTOR,
+            "engines": {
+                t: {"primary": "realesrgan", "fallback": "none", "threshold": 70, "advanced": False}
+                for t in ["character", "interface", "items", "scenery"]
+            },
+        }
+        self._apply_settings(defaults)
 
     @pyqtSlot(str)
     def log_message(self, message: str):
@@ -198,6 +363,14 @@ class FalloutUpscalerApp(QMainWindow):
         self.realesrgan_exe_path = Path(self.realesrgan_exe_edit.text()) if self.realesrgan_exe_edit.text() else None
         self.realesrgan_model_name = self.realesrgan_model_edit.text() or None
         self.upscale_factor = self.upscale_factor_edit.text()
+        self.engine_settings = {}
+        for asset, widgets in getattr(self, "engine_widgets", {}).items():
+            self.engine_settings[asset] = {
+                "primary": widgets["primary"].currentText(),
+                "fallback": widgets["fallback"].currentText(),
+                "threshold": widgets["threshold"].value(),
+                "advanced": widgets["advanced"].isChecked(),
+            }
         self._save_settings()
 
     def _create_backup(self) -> bool:
@@ -344,14 +517,32 @@ class FalloutUpscalerApp(QMainWindow):
             upscaled_dir = self.workspace_dir / "png_upscaled"
             shutil.rmtree(upscaled_dir, ignore_errors=True)
             upscaled_dir.mkdir(parents=True, exist_ok=True)
-            scaler_chars = AIScaler(self.realesrgan_exe_path, "realesrgan-x4plus-anime", self.upscale_factor, DEFAULT_GPU_ID, signals)
-            scaler_textures = AIScaler(self.realesrgan_exe_path, self.realesrgan_model_name or 'realesrgan-x4plus', self.upscale_factor, DEFAULT_GPU_ID, signals)
+            scaler_chars = AIScaler(
+                self.realesrgan_exe_path,
+                "realesrgan-x4plus-anime",
+                self.upscale_factor,
+                DEFAULT_GPU_ID,
+                signals,
+            )
+            scaler_textures = AIScaler(
+                self.realesrgan_exe_path,
+                self.realesrgan_model_name or "realesrgan-x4plus",
+                self.upscale_factor,
+                DEFAULT_GPU_ID,
+                signals,
+            )
             if not scaler_chars.upscale_directory(png_dir_chars, upscaled_dir):
+                self.engine_stats["realesrgan"]["fail"] += 1
                 signals.error.emit("Upscaling échoué (characters)")
                 return
+            else:
+                self.engine_stats["realesrgan"]["success"] += 1
             if not scaler_textures.upscale_directory(png_dir_textures, upscaled_dir):
+                self.engine_stats["realesrgan"]["fail"] += 1
                 signals.error.emit("Upscaling échoué (textures)")
                 return
+            else:
+                self.engine_stats["realesrgan"]["success"] += 1
             signals.progress.emit(70)
             self._create_preview_comparison(png_dir, upscaled_dir)
             signals.request_validation.emit(str(png_dir), str(upscaled_dir))
