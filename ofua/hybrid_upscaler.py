@@ -12,6 +12,7 @@ from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 from .workers import WorkerSignals
 from .ai_scaler import AIScaler
 from .config import DEFAULT_GPU_ID
+from .engines.upscayl_engine import UpscaylEngine
 
 
 class UpscalerEngine(Enum):
@@ -33,21 +34,6 @@ ASSET_PROFILES: Dict[str, AssetProfile] = {
     "items": AssetProfile(UpscalerEngine.UPSCAYL, UpscalerEngine.REALESRGAN),
     "scenery": AssetProfile(UpscalerEngine.COMFYUI, UpscalerEngine.REALESRGAN),
 }
-
-
-class UpscaylEngine:
-    def __init__(self, signals: Optional[WorkerSignals] = None):
-        self._signals = signals
-
-    def _log(self, message: str):
-        if self._signals:
-            self._signals.log.emit(message)
-        else:
-            print(message)
-
-    def upscale(self, input_dir: Path, output_dir: Path) -> bool:
-        self._log("Upscayl engine not implemented.")
-        return False
 
 
 class ComfyUIEngine:
