@@ -5,3 +5,4 @@ from .engines.comfyui_engine import ComfyUIEngine
 from .quality_metrics import QualityMetrics
 from .post_processor import IntelligentPostProcessor
 
+from .profiles import ProfileManager
