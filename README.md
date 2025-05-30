@@ -11,7 +11,7 @@
     * L'application vérifie automatiquement la présence de l'exécutable et du modèle. S'ils sont absents, ils seront téléchargés dans le répertoire du projet.
     * Vous pouvez tout de même déclencher manuellement le téléchargement avec :
         ```bash
-        python OFUA.py --download-real-esrgan chemin/vers/dossier
+        python main.py --download-real-esrgan chemin/vers/dossier
         ```
       (par défaut, le téléchargement se fait dans le dossier courant.)
     * Alternativement, rendez-vous sur la page des releases de [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases) et téléchargez la version `realesrgan-ncnn-vulkan`. Extrayez `realesrgan-ncnn-vulkan.exe` ainsi que le dossier `models`.
@@ -19,7 +19,7 @@
 3.  **Lancer l'application :**
     * Exécutez simplement :
         ```bash
-        python OFUA.py
+        python main.py
         ```
 
 4.  **Configuration dans l'interface :**
@@ -31,6 +31,7 @@
 5.  **Démarrer le processus :**
     * Cliquez sur "Démarrer le Processus Complet".
     * Suivez les logs et la barre de progression.
+    * À la fin de l'upscaling, une fenêtre de comparaison avant/après vous permettra de valider le résultat.
 
 6.  **Résultats :**
     * Une fois terminé, les fichiers `.FRM` upscalés se trouveront dans le sous-dossier `frm_upscaled_final` de votre répertoire de travail.
