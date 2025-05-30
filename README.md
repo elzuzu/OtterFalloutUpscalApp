@@ -47,6 +47,7 @@
 * **Interface utilisateur :** L'interface est fonctionnelle mais pourrait être améliorée (plus d'options, meilleure présentation des erreurs, etc.).
 * **Offsets des sprites :** Lors de la reconversion PNG vers FRM, les offsets (`offset_x`, `offset_y`) des frames sont actuellement mis à 0. Pour un rendu parfait, il faudrait idéalement les recalculer ou les ajuster en fonction de la nouvelle taille des sprites, ou reprendre ceux des FRM originaux si l'upscale ne déplace pas le "centre" du sprite.
 * **Palette pour la quantification :** La méthode `Image.quantize(palette=Image.open(self.pil_palette_image_path))` est utilisée. La qualité de la quantification est cruciale. `dither=Image.Dither.FLOYDSTEINBERG` aide.
+* **Détection automatique du type d'asset :** Les fichiers FRM sont désormais catégorisés (personnages ou textures) selon leur chemin. Des modèles Real-ESRGAN différents sont appliqués automatiquement pour chaque catégorie.
 
 J'espère que cette application vous sera un excellent point de départ ! N'hésitez pas si vous avez des questions ou si vous rencontrez des problèmes.Okay, I've generated a comprehensive Python application with a PyQt6 GUI that aims to automate the Fallout 1 CE asset upscaling process as you described.
 
