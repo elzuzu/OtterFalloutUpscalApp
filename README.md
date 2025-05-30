@@ -63,3 +63,12 @@ python setup_enhanced.py
 ```
 
 N'hésitez pas à créer vos propres profils pour adapter vitesse et qualité. Pour toute question, ouvrez un ticket sur le dépôt.
+
+
+## Guide de dépannage
+
+Si l'application ne se lance pas ou plante en cours d'exécution :
+
+1. Vérifiez que toutes les dépendances Python sont installées (`pip install -r requirements.txt`).
+2. Assurez-vous que `realesrgan-ncnn-vulkan.exe` est présent et exécutable.
+3. Consultez le fichier `upscaler.log` dans votre répertoire de travail pour plus de détails.
