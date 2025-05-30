@@ -5,6 +5,8 @@ import zlib
 import struct
 import json
 import time
+import urllib.request
+import zipfile
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -33,6 +35,37 @@ DEFAULT_REALESRGAN_MODEL = "" # À remplir par l'utilisateur via l'UI (nom du mo
 DEFAULT_UPSCALE_FACTOR = "4" # Facteur d'upscale pour Real-ESRGAN
 CPU_WORKERS = os.cpu_count() or 4  # Utilisé pour les conversions parallèles
 DEFAULT_GPU_ID = 0  # GPU à utiliser avec Real-ESRGAN
+
+# URL de téléchargement par défaut pour Real-ESRGAN (version Windows)
+REALESRGAN_DOWNLOAD_URL = (
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/"
+    "v0.2.3.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
+)
+
+
+def download_real_esrgan(dest_dir: Path, url: str = REALESRGAN_DOWNLOAD_URL) -> Path:
+    """Télécharge et extrait Real-ESRGAN dans le dossier spécifié."""
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = dest_dir / "real-esrgan.zip"
+    print(f"Téléchargement de Real-ESRGAN depuis {url}...")
+    try:
+        urllib.request.urlretrieve(url, zip_path)
+    except Exception as e:
+        print(f"Échec du téléchargement: {e}")
+        return dest_dir
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(dest_dir)
+    except Exception as e:
+        print(f"Échec de l'extraction: {e}")
+    finally:
+        if zip_path.exists():
+            zip_path.unlink()
+
+    print(f"Real-ESRGAN téléchargé dans {dest_dir}")
+    return dest_dir
 
 # --- Classes de Données ---
 @dataclass
@@ -1097,6 +1130,12 @@ class GitProgress(git.remote.RemoteProgress):
 
 
 if __name__ == '__main__':
+    if '--download-real-esrgan' in sys.argv:
+        idx = sys.argv.index('--download-real-esrgan')
+        target = sys.argv[idx + 1] if len(sys.argv) > idx + 1 else '.'
+        download_real_esrgan(Path(target))
+        sys.exit(0)
+
     app = QApplication(sys.argv)
     # Appliquer un style sombre simple (optionnel)
     # app.setStyle("Fusion")

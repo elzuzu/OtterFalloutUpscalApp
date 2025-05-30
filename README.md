@@ -1,20 +1,25 @@
 **Comment utiliser l'application :**
 
-1.  **Installation des dépendances :**
+1.  **Installation des dépendances Python :**
     * Assurez-vous d'avoir Python installé.
-    * Installez les bibliothèques nécessaires :
+    * Installez toutes les bibliothèques nécessaires avec :
         ```bash
-        pip install PyQt6 Pillow numpy GitPython
+        pip install -r requirements.txt
         ```
 
 2.  **Télécharger Real-ESRGAN :**
-    * Allez sur la page des releases de [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases).
-    * Téléchargez la version `realesrgan-ncnn-vulkan` pour Windows (par exemple, `realesrgan-ncnn-vulkan-20220424-windows.zip`).
-    * Extrayez l'archive. Vous y trouverez `realesrgan-ncnn-vulkan.exe` et un dossier `models` contenant les fichiers `.param` et `.bin` des modèles.
+    * Vous pouvez récupérer automatiquement l'exécutable avec :
+        ```bash
+        python OFUA.py --download-real-esrgan chemin/vers/dossier
+        ```
+      (par défaut, le téléchargement se fait dans le dossier courant.)
+    * Alternativement, rendez-vous sur la page des releases de [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases) et téléchargez la version `realesrgan-ncnn-vulkan`. Extrayez `realesrgan-ncnn-vulkan.exe` ainsi que le dossier `models`.
 
 3.  **Lancer l'application :**
-    * Enregistrez le code Python ci-dessus dans un fichier (par exemple, `fallout_upscaler.py`).
-    * Exécutez-le : `python fallout_upscaler.py`.
+    * Exécutez simplement :
+        ```bash
+        python OFUA.py
+        ```
 
 4.  **Configuration dans l'interface :**
     * **Répertoire de travail :** Choisissez un dossier où l'application stockera le dépôt cloné, les fichiers extraits, les PNG, etc.
