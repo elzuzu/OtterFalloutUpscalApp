@@ -3,3 +3,6 @@ Pillow
 numpy
 GitPython
 psutil
+opencv-python
+scikit-image
+
