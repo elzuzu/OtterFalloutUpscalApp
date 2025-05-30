@@ -67,6 +67,15 @@ def download_real_esrgan(dest_dir: Path, url: str = REALESRGAN_DOWNLOAD_URL) -> 
     print(f"Real-ESRGAN téléchargé dans {dest_dir}")
     return dest_dir
 
+
+def find_realesrgan_exe(search_dir: Path) -> Optional[Path]:
+    """Recherche l'exécutable Real-ESRGAN dans un dossier."""
+    for exe_name in ("realesrgan-ncnn-vulkan.exe", "realesrgan-ncnn-vulkan"):
+        for path in search_dir.rglob(exe_name):
+            if path.is_file():
+                return path
+    return None
+
 # --- Classes de Données ---
 @dataclass
 class DATEntry:
@@ -618,9 +627,16 @@ class AIScaler:
     def upscale_directory(self, input_dir_png: Path, output_dir_upscaled_png: Path) -> bool:
         """Upscale toutes les images PNG d'un répertoire."""
         if not self.realesrgan_exe or not self.realesrgan_exe.exists():
-            self._log(f"Erreur: Exécutable Real-ESRGAN non trouvé à {self.realesrgan_exe}")
-            if self._signals: self._signals.error.emit("Real-ESRGAN non trouvé. Veuillez configurer le chemin.")
-            return False
+            self._log("Exécutable Real-ESRGAN introuvable, téléchargement automatique...")
+            project_root = Path(__file__).parent
+            download_real_esrgan(project_root)
+            found = find_realesrgan_exe(project_root)
+            if not found:
+                self._log(f"Erreur: Exécutable Real-ESRGAN non trouvé dans {project_root}.")
+                if self._signals:
+                    self._signals.error.emit("Real-ESRGAN non trouvé.")
+                return False
+            self.realesrgan_exe = found
         
         # Vérifier si le modèle .param et .bin existent (Real-ESRGAN les cherche à côté de l'exe ou dans un sous-dossier 'models')
         model_param_path = self.realesrgan_exe.parent / f"{self.model_name}.param"
@@ -629,12 +645,17 @@ class AIScaler:
         alt_model_param_path = self.realesrgan_exe.parent / "models" / f"{self.model_name}.param"
         alt_model_bin_path = self.realesrgan_exe.parent / "models" / f"{self.model_name}.bin"
 
-        if not ( (model_param_path.exists() and model_bin_path.exists()) or \
-                 (alt_model_param_path.exists() and alt_model_bin_path.exists()) ):
-            self._log(f"Erreur: Fichiers modèle Real-ESRGAN (.param et .bin) pour '{self.model_name}' non trouvés.")
-            self._log(f"Cherché dans: {self.realesrgan_exe.parent} et {self.realesrgan_exe.parent / 'models'}")
-            if self._signals: self._signals.error.emit(f"Modèle '{self.model_name}' non trouvé.")
-            return False
+        if not ((model_param_path.exists() and model_bin_path.exists()) or
+                (alt_model_param_path.exists() and alt_model_bin_path.exists())):
+            self._log("Modèle Real-ESRGAN introuvable, téléchargement automatique...")
+            download_real_esrgan(self.realesrgan_exe.parent)
+            if not ((model_param_path.exists() and model_bin_path.exists()) or
+                    (alt_model_param_path.exists() and alt_model_bin_path.exists())):
+                self._log(f"Erreur: Fichiers modèle Real-ESRGAN (.param et .bin) pour '{self.model_name}' non trouvés.")
+                self._log(f"Cherché dans: {self.realesrgan_exe.parent} et {self.realesrgan_exe.parent / 'models'}")
+                if self._signals:
+                    self._signals.error.emit(f"Modèle '{self.model_name}' non trouvé.")
+                return False
 
         output_dir_upscaled_png.mkdir(parents=True, exist_ok=True)
 
