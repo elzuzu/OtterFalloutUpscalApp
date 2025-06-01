@@ -41,6 +41,7 @@ from .dat_tools import DatArchive, FRMConverter, ProcessingStats
 from .hybrid_upscaler import HybridUpscaler
 from .post_processor import IntelligentPostProcessor
 from .quality_metrics import QualityMetrics
+from .direct3d_integration import Direct3DIntegration
 from .workers import TaskRunner, WorkerSignals
 from .git_utils import GitProgress
 from .validation import ValidationDialog
@@ -59,6 +60,8 @@ class FalloutUpscalerApp(QMainWindow):
         self.fallout_ce_cloned_path: Optional[Path] = None
         self.color_pal_path: Optional[Path] = None
         self.pil_palette_image_for_quantize: Optional[Path] = None
+        self.enable_3d_generation: bool = False
+        self.output_mode: int = 2
         if DEFAULT_REALESRGAN_EXE:
             self.realesrgan_exe_path = Path(DEFAULT_REALESRGAN_EXE)
         if DEFAULT_REALESRGAN_MODEL:
@@ -85,6 +88,7 @@ class FalloutUpscalerApp(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._create_general_tab(), "Général")
         self.tabs.addTab(self._create_engines_tab(), "Moteurs")
+        self.tabs.addTab(self._create_3d_generation_tab(), "3D")
         self.tabs.addTab(self._create_monitoring_tab(), "Monitoring")
         layout.addWidget(self.tabs)
 
@@ -207,6 +211,25 @@ class FalloutUpscalerApp(QMainWindow):
         layout.addStretch()
         return widget
 
+    def _create_3d_generation_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        self.enable_3d_gen = QCheckBox("Générer modèles 3D")
+        self.enable_3d_gen.setChecked(self.enable_3d_generation)
+        layout.addWidget(self.enable_3d_gen)
+
+        fmt_layout = QHBoxLayout()
+        fmt_layout.addWidget(QLabel("Mode de sortie:"))
+        self.output_format = QComboBox()
+        self.output_format.addItems(["2D seulement", "3D seulement", "2D + 3D"])
+        self.output_format.setCurrentIndex(self.output_mode)
+        fmt_layout.addWidget(self.output_format)
+        layout.addLayout(fmt_layout)
+
+        layout.addStretch()
+        return widget
+
     def _create_monitoring_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -254,6 +277,8 @@ class FalloutUpscalerApp(QMainWindow):
             "realesrgan_model": self.realesrgan_model_name or "",
             "factor": self.upscale_factor,
             "engines": engines_cfg,
+            "enable_3d": getattr(self, "enable_3d_gen", None).isChecked() if hasattr(self, "enable_3d_gen") else False,
+            "output_mode": getattr(self, "output_format", None).currentIndex() if hasattr(self, "output_format") else 0,
         }
 
     def _apply_settings(self, data: Dict[str, object]):
@@ -273,6 +298,14 @@ class FalloutUpscalerApp(QMainWindow):
         self.realesrgan_exe_edit.setText(str(self.realesrgan_exe_path) if self.realesrgan_exe_path else "")
         self.realesrgan_model_edit.setText(self.realesrgan_model_name or "")
         self.upscale_factor_edit.setText(self.upscale_factor)
+        if hasattr(self, "enable_3d_gen"):
+            val = bool(data.get("enable_3d", False))
+            self.enable_3d_gen.setChecked(val)
+            self.enable_3d_generation = val
+        if hasattr(self, "output_format"):
+            idx = int(data.get("output_mode", 0))
+            self.output_format.setCurrentIndex(idx)
+            self.output_mode = idx
 
     def _save_settings(self):
         self._settings_file().write_text(json.dumps(self._collect_settings()))
@@ -322,6 +355,8 @@ class FalloutUpscalerApp(QMainWindow):
                 t: {"primary": "realesrgan", "fallback": "none", "threshold": 70, "advanced": False}
                 for t in ["character", "interface", "items", "scenery"]
             },
+            "enable_3d": False,
+            "output_mode": 2,
         }
         self._apply_settings(defaults)
 
@@ -375,6 +410,14 @@ class FalloutUpscalerApp(QMainWindow):
                 "threshold": widgets["threshold"].value(),
                 "advanced": widgets["advanced"].isChecked(),
             }
+        if hasattr(self, "enable_3d_gen"):
+            self.enable_3d_generation = self.enable_3d_gen.isChecked()
+        else:
+            self.enable_3d_generation = False
+        if hasattr(self, "output_format"):
+            self.output_mode = self.output_format.currentIndex()
+        else:
+            self.output_mode = 0
         self._save_settings()
 
     def _create_backup(self) -> bool:
@@ -563,6 +606,25 @@ class FalloutUpscalerApp(QMainWindow):
                     if up_sample.exists():
                         score = QualityMetrics.calculate_composite_score(orig_sample, up_sample, a_type)
                         signals.log.emit(f"Qualité {a_type}: {score:.3f}")
+
+            if self.enable_3d_generation:
+                signals.log.emit("Génération des modèles 3D...")
+                try:
+                    d3d = Direct3DIntegration(self.workspace_dir)
+                    for a_type in assets_by_type.keys():
+                        dst = upscaled_dir / a_type
+                        out_3d = self.workspace_dir / "models_3d" / a_type
+                        out_3d.mkdir(parents=True, exist_ok=True)
+                        for img in dst.glob("*.png"):
+                            try:
+                                mesh = d3d.generate_3d_from_sprite(img, a_type)
+                                mesh_path = out_3d / (img.stem + ".obj")
+                                with open(mesh_path, "wb") as f:
+                                    f.write(mesh)
+                            except Exception as exc:
+                                signals.log.emit(f"3D échoué pour {img.name}: {exc}")
+                except Exception as exc:
+                    signals.log.emit(f"Pipeline 3D indisponible: {exc}")
 
             signals.progress.emit(70)
             self._create_preview_comparison(png_dir, upscaled_dir)
