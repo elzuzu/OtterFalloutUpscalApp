@@ -55,6 +55,7 @@
 * **Pipeline `HybridUpscaler`** combinant Upscayl, ComfyUI et Real‑ESRGAN selon le type d'asset avec validation de qualité (SSIM/PSNR).
 * **Profils configurables** : les paramètres des moteurs et leurs seuils peuvent être sauvegardés dans `~/.ofua_profiles`. Des profils `speed`, `quality`, `balanced` et `fallout_optimized` sont inclus.
 * **Script `setup_enhanced.py`** pour préparer automatiquement l'environnement (installation des dépendances et vérifications système).
+* **Option Direct3D‑S2** : génération de modèles 3D à partir des sprites grâce à un pipeline intégré simplifié.
 
 Pour exécuter ce script :
 
